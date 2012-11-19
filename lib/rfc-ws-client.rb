@@ -9,9 +9,18 @@ require 'rainbow'
 require 'base64'
 
 module RfcWebSocket
+  class WebSocketError < RuntimeError
+    attr_reader :code
+
+    def initialize(text, code = 1002)
+      super(text)
+      @code = code
+    end
+  end
+
   class WebSocket
     WEB_SOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-    OPCODE_CONTINUATION = 0x01
+    OPCODE_CONTINUATION = 0x00
     OPCODE_TEXT = 0x01
     OPCODE_BINARY = 0x02
     OPCODE_CLOSE = 0x08
@@ -28,7 +37,7 @@ module RfcWebSocket
       elsif uri.scheme = "wss"
         default_port = 443
       else
-        raise "unsupported scheme: #{uri.scheme}"
+        raise WebSocketError.new("unsupported scheme: #{uri.scheme}")
       end
       host = uri.host + ((!uri.port || uri.port == default_port) ? "" : ":#{uri.port}")
       path = (uri.path.empty? ? "/" : uri.path) + (uri.query ? "?" + uri.query : "")
@@ -45,23 +54,23 @@ module RfcWebSocket
       flush()
 
       status_line = gets.chomp
-      raise "bad response: #{status_line}" unless status_line.start_with?("HTTP/1.1 101")
+      raise WebSocketError.new("bad response: #{status_line}") unless status_line.start_with?("HTTP/1.1 101")
 
       header = {}
       while line = gets
         line.chomp!
         break if line.empty?
         if !(line =~ /\A(\S+): (.*)\z/n)
-          raise "invalid response: #{line}"
+          raise WebSocketError.new("invalid response: #{line}")
         end
         header[$1.downcase] = $2
       end
-      raise "upgrade missing" unless header["upgrade"]
-      raise "connection missing" unless header["connection"]
+      raise WebSocketError.new("upgrade missing") unless header["upgrade"]
+      raise WebSocketError.new("connection missing") unless header["connection"]
       accept = header["sec-websocket-accept"]
-      raise "sec-websocket-accept missing" unless accept
+      raise WebSocketError.new("sec-websocket-accept missing") unless accept
       expected_accept = Digest::SHA1.base64digest(request_key + WEB_SOCKET_GUID)
-      raise "sec-websocket-accept is invalid, actual: #{accept}, expected: #{expected_accept}" unless accept == expected_accept
+      raise WebSocketError.new("sec-websocket-accept is invalid, actual: #{accept}, expected: #{expected_accept}") unless accept == expected_accept
     end
 
     def send_message(message, opts = {binary: false})
@@ -70,66 +79,90 @@ module RfcWebSocket
 
     def receive
       begin
-        bytes = read(2).unpack("C*")
-        fin = (bytes[0] & 0x80) != 0
-        opcode = bytes[0] & 0x0f
-        mask = (bytes[1] & 0x80) != 0
-        length = bytes[1] & 0x7f
-        if bytes[0] & 0b01110000 != 0
-          raise "reserved bits must be 0"
-        end
-        if opcode > 7
-          if !fin
-            raise "control frame cannot be fragmented"
-          elsif length > 125
-            raise "Control frame is too large #{length}"
-          elsif opcode > 0xA
-            raise "Unexpected reserved opcode #{opcode}"
-          elsif opcode == OPCODE_CLOSE && length == 1
-            raise "Close control frame with payload of length 1"
+        buffer = ""
+        fragmented = false
+        binary = false
+        # Loop until something returns
+        while true
+          b1, b2 = read(2).unpack("CC")
+          puts "b1: #{b1.to_s(2).rjust(8, "0")}, b2: #{b2.to_s(2).rjust(8, "0")}" if DEBUG
+          # first byte
+          fin = (b1 & 0x80) != 0
+          raise WebSocketError.new("reserved bits must be 0") if (b1 & 0b01110000) != 0
+          opcode = b1 & 0x0f
+          # second byte
+          mask = (b2 & 0x80) != 0
+          # we're a client
+          raise WebSocketError.new("server->client must not be masked!") if mask
+          length = b2 & 0x7f
+          if opcode > 7
+            raise WebSocketError.new("control frame cannot be fragmented") unless fin
+            raise WebSocketError.new("control frame is too large: #{length}") if length > 125
+            raise WebSocketError.new("unexpected reserved opcode: #{opcode}") if opcode > 0xA
+            raise WebSocketError.new("close frame with payload length 1") if length == 1 and opcode == OPCODE_CLOSE
+          elsif opcode != OPCODE_CONTINUATION && opcode != OPCODE_TEXT && opcode != OPCODE_BINARY
+            raise WebSocketError.new("unexpected reserved opcode: #{opcode}")
           end
-        else
-          if opcode != OPCODE_CONTINUATION && opcode != OPCODE_TEXT && opcode != OPCODE_BINARY
-            raise "Unexpected reserved opcode #{opcode}"
+          # extended payload length
+          if length == 126
+            length = read(2).unpack("n")[0]
+          elsif length == 127
+            high, low = *read(8).unpack("NN")
+            length = high * (2 ** 32) + low
           end
-        end
-        if length == 126
-          bytes = read(2)
-          length = bytes.unpack("n")[0]
-        elsif length == 127
-          bytes = read(8)
-          (high, low) = bytes.unpack("NN")
-          length = high * (2 ** 32) + low
-        end
-        mask_key = mask ? read(4).unpack("C*") : nil
-        payload = read(length)
-        payload = apply_mask(payload, mask_key) if mask
-        case opcode
-        when OPCODE_TEXT
-          return payload.force_encoding("UTF-8"), false
-        when OPCODE_BINARY
-          return payload, true
-        when OPCODE_CLOSE
-          code, explain = payload.unpack("nA*")
-          if explain && !explain.force_encoding("UTF-8").valid_encoding?
-            close(1007)
+          # payload
+          payload = read(length)
+          case opcode
+          when OPCODE_CONTINUATION
+            raise WebSocketError.new("no frame to continue") unless fragmented
+            buffer << payload
+            if fin
+              raise WebSocketError.new("invalid utf8", 1007) if !valid_utf8?(buffer) and !binary
+              return buffer, binary
+            else
+              next
+            end
+          when OPCODE_TEXT
+            raise WebSocketError.new("invalid utf8", 1007) if !valid_utf8?(payload) and fin
+            raise WebSocketError.new("unexpected opcode in continuation mode") if fragmented
+            if !fin
+              fragmented = true
+              binary = false
+              buffer << payload
+              next
+            end
+            return payload, false
+          when OPCODE_BINARY
+            raise WebSocketError.new("unexpected opcode in continuation mode") if fragmented
+            if !fin
+              fragmented = true
+              binary = true
+              buffer << payload
+              next
+            end
+            return payload, true
+          when OPCODE_CLOSE
+            code, explain = payload.unpack("nA*")
+            if explain && !valid_utf8?(explain)
+              close(1007)
+            else
+              close(response_close_code(code))
+            end
+            return nil, nil
+          when OPCODE_PING
+            write(encode(payload, OPCODE_PONG))
+            next
+          when OPCODE_PONG
+            next
           else
-            close(response_close_code(code))
+            raise WebSocketError.new("received unknown opcode: #{opcode}")
           end
-          return nil, nil
-        when OPCODE_PING
-          write(encode(payload, OPCODE_PONG))
-          #TODO fix recursion
-          return receive
-        when OPCODE_PONG
-          return receive
-        else
-          raise "received unknown opcode: #{opcode}"
         end
       rescue EOFError
         return nil, nil
-      rescue => e
-        close(1002)
+      rescue WebSocketError => e
+        puts e
+        close(e.code)
         raise e
       end
     end
@@ -180,18 +213,9 @@ module RfcWebSocket
     end
 
     def encode(data, opcode)
-      frame = []
-      frame << (opcode | 0x80)
-
+      raise WebSocketError.new("invalud utf8") if opcode == OPCODE_TEXT and !valid_utf8?(data)
+      frame = [opcode | 0x80]
       packr = "CC"
-
-      if opcode == OPCODE_TEXT
-        data.force_encoding("UTF-8")
-        if !data.valid_encoding?
-          raise "Invalid UTF!"
-        end
-      end
-
       # append frame length and mask bit 0x80
       len = data ? data.bytesize : 0
       if len <= 125
@@ -205,19 +229,15 @@ module RfcWebSocket
         frame << len
         packr << "L!>"
       end
-
       # generate a masking key
       key = rand(2 ** 31)
-
       # mask each byte with the key
       frame << key
       packr << "N"
-
       # Apply the masking key to every byte
       len.times do |i|
         frame << ((data.getbyte(i) ^ (key >> ((3 - (i % 4)) * 8))) & 0xFF)
       end
-
       frame.pack("#{packr}C*")
     end
 
@@ -234,6 +254,10 @@ module RfcWebSocket
       else
         1002
       end
+    end
+
+    def valid_utf8?(str)
+      str.force_encoding("UTF-8").valid_encoding?
     end
   end
 end
