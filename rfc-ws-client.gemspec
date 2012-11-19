@@ -8,9 +8,8 @@ Gem::Specification.new do |gem|
   gem.version       = RfcWebsocket::VERSION
   gem.authors       = ["Lucas Clemente"]
   gem.email         = ["luke.clemente@gmail.com"]
-  gem.description   = %q{TODO: Write a gem description}
-  gem.summary       = %q{TODO: Write a gem summary}
-  gem.homepage      = ""
+  gem.summary       = %q{A simple Websocket client in ruby}
+  gem.homepage      = "https://github.com/lucas-clemente/rfc-ws-client"
 
   gem.files         = `git ls-files`.split($/)
   gem.executables   = gem.files.grep(%r{^bin/}).map{ |f| File.basename(f) }
