@@ -8,8 +8,8 @@ require "digest/sha1"
 require 'rainbow'
 require 'base64'
 
-module RfcWebsocket
-  class Websocket
+module RfcWebSocket
+  class WebSocket
     WEB_SOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
     OPCODE_CONTINUATION = 0x01
     OPCODE_TEXT = 0x01

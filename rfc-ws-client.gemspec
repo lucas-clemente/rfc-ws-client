@@ -5,10 +5,10 @@ require 'rfc-ws-client/version'
 
 Gem::Specification.new do |gem|
   gem.name          = "rfc-ws-client"
-  gem.version       = RfcWebsocket::VERSION
+  gem.version       = RfcWebSocket::VERSION
   gem.authors       = ["Lucas Clemente"]
   gem.email         = ["luke.clemente@gmail.com"]
-  gem.summary       = %q{A simple Websocket client in ruby}
+  gem.summary       = %q{A simple WebSocket client in ruby}
   gem.homepage      = "https://github.com/lucas-clemente/rfc-ws-client"
 
   gem.files         = `git ls-files`.split($/)

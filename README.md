@@ -1,6 +1,6 @@
-# RFC Websocket Client (rfc-ws-client)
+# RFC WebSocket Client (rfc-ws-client)
 
-A simple (more-or-less) RFC 6455 (Websocket) compatible client without external dependencies.
+A simple (more-or-less) RFC 6455 (WebSocket) compatible client without external dependencies.
 
 Currently doesn't support fragmentation.
 
@@ -17,7 +17,7 @@ gem 'rfc-ws-client'
 ## Usage
 
 ```ruby
-ws = RfcWebsocket::Websocket.new("wss://echo.websocket.org")
+ws = RfcWebSocket::WebSocket.new("wss://echo.websocket.org")
 ws.send_message("test")
 ws.receive # => "test"
 ws.close
