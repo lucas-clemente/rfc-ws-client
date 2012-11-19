@@ -24,9 +24,9 @@ ws.close
 ## Testing
 
 ```bash
-    wstest -m fuzzingserver
-    # in different console
-    ruby examples/autobahn.rb
+wstest -m fuzzingserver
+# in different console
+ruby examples/autobahn.rb
 ```
 
 ## Contributing
