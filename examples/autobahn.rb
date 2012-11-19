@@ -5,8 +5,8 @@ require "rfc-ws-client"
 ws = RfcWebSocket::WebSocket.new("ws://localhost:9001/getCaseCount")
 count = ws.receive()[0].to_i
 ws.close
-i = 69
-# (68..77).each do |i|
+
+(1..count).each do |i|
   puts "#{i}/#{count}"
   begin
     ws = RfcWebSocket::WebSocket.new "ws://localhost:9001/runCase?&case=#{i}&agent=rfc-ws-client"
@@ -17,7 +17,7 @@ i = 69
     end
   rescue
   end
-# end
+end
 
 puts "Updating reports and shutting down"
 ws = RfcWebSocket::WebSocket.new "ws://localhost:9001/updateReports?agent=rfc-ws-client"

@@ -115,32 +115,33 @@ module RfcWebSocket
           case opcode
           when OPCODE_CONTINUATION
             raise WebSocketError.new("no frame to continue") unless fragmented
-            buffer << payload
+            buffer << payload.force_encoding("UTF-8")
             if fin
-              raise WebSocketError.new("invalid utf8", 1007) if !valid_utf8?(buffer) and !binary
+              raise WebSocketError.new("invalid utf8", 1007) if !binary and !valid_utf8?(buffer)
               return buffer, binary
             else
               next
             end
           when OPCODE_TEXT
-            raise WebSocketError.new("invalid utf8", 1007) if !valid_utf8?(payload) and fin
             raise WebSocketError.new("unexpected opcode in continuation mode") if fragmented
             if !fin
               fragmented = true
               binary = false
-              buffer << payload
+              buffer << payload.force_encoding("UTF-8")
               next
+            else
+              raise WebSocketError.new("invalid utf8", 1007) unless valid_utf8?(payload)
+              return payload, false
             end
-            return payload, false
           when OPCODE_BINARY
             raise WebSocketError.new("unexpected opcode in continuation mode") if fragmented
             if !fin
               fragmented = true
               binary = true
               buffer << payload
-              next
+            else
+              return payload, true
             end
-            return payload, true
           when OPCODE_CLOSE
             code, explain = payload.unpack("nA*")
             if explain && !valid_utf8?(explain)
@@ -256,8 +257,12 @@ module RfcWebSocket
       end
     end
 
+    def force_utf8(str)
+      str.force_encoding("UTF-8")
+    end
+
     def valid_utf8?(str)
-      str.force_encoding("UTF-8").valid_encoding?
+      force_utf8(str).valid_encoding?
     end
   end
 end
