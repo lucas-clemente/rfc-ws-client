@@ -10,7 +10,9 @@ Includes source code from [em-ws-client](https://github.com/dansimpson/em-ws-cli
 
 Add this line to your application's Gemfile:
 
-    gem 'rfc-ws-client'
+```ruby
+gem 'rfc-ws-client'
+```
 
 ## Usage
 
