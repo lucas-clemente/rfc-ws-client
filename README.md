@@ -16,8 +16,8 @@ gem 'rfc-ws-client'
 
 ```ruby
 ws = RfcWebSocket::WebSocket.new("wss://echo.websocket.org")
-ws.send_message("test")
-ws.receive # => "test"
+ws.send_message("test", binary: false)
+msg, binary = ws.receive # => "test", false
 ws.close
 ```
 
