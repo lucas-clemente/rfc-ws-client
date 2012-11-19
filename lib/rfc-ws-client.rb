@@ -11,12 +11,13 @@ require 'base64'
 module RfcWebsocket
   class Websocket
     WEB_SOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+    OPCODE_CONTINUATION = 0x01
     OPCODE_TEXT = 0x01
     OPCODE_BINARY = 0x02
     OPCODE_CLOSE = 0x08
     OPCODE_PING = 0x09
     OPCODE_PONG = 0x0a
-    DEBUG = true
+    DEBUG = false
 
     def initialize(uri, protocol = "")
       uri = URI.parse(uri) unless uri.is_a?(URI)
@@ -73,17 +74,35 @@ module RfcWebsocket
         fin = (bytes[0] & 0x80) != 0
         opcode = bytes[0] & 0x0f
         mask = (bytes[1] & 0x80) != 0
-        plength = bytes[1] & 0x7f
-        if plength == 126
+        length = bytes[1] & 0x7f
+        if bytes[0] & 0b01110000 != 0
+          raise "reserved bits must be 0"
+        end
+        if opcode > 7
+          if !fin
+            raise "control frame cannot be fragmented"
+          elsif length > 125
+            raise "Control frame is too large #{length}"
+          elsif opcode > 0xA
+            raise "Unexpected reserved opcode #{opcode}"
+          elsif opcode == OPCODE_CLOSE && length == 1
+            raise "Close control frame with payload of length 1"
+          end
+        else
+          if opcode != OPCODE_CONTINUATION && opcode != OPCODE_TEXT && opcode != OPCODE_BINARY
+            raise "Unexpected reserved opcode #{opcode}"
+          end
+        end
+        if length == 126
           bytes = read(2)
-          plength = bytes.unpack("n")[0]
-        elsif plength == 127
+          length = bytes.unpack("n")[0]
+        elsif length == 127
           bytes = read(8)
           (high, low) = bytes.unpack("NN")
-          plength = high * (2 ** 32) + low
+          length = high * (2 ** 32) + low
         end
         mask_key = mask ? read(4).unpack("C*") : nil
-        payload = read(plength)
+        payload = read(length)
         payload = apply_mask(payload, mask_key) if mask
         case opcode
         when OPCODE_TEXT
@@ -91,18 +110,27 @@ module RfcWebsocket
         when OPCODE_BINARY
           return payload, true
         when OPCODE_CLOSE
-          close
+          code, explain = payload.unpack("nA*")
+          if explain && !explain.force_encoding("UTF-8").valid_encoding?
+            close(1007)
+          else
+            close(response_close_code(code))
+          end
           return nil, nil
         when OPCODE_PING
           write(encode(payload, OPCODE_PONG))
           #TODO fix recursion
           return receive
         when OPCODE_PONG
+          return receive
         else
           raise "received unknown opcode: #{opcode}"
         end
       rescue EOFError
         return nil, nil
+      rescue => e
+        close(1002)
+        raise e
       end
     end
 
@@ -191,6 +219,21 @@ module RfcWebsocket
       end
 
       frame.pack("#{packr}C*")
+    end
+
+    def response_close_code(code)
+      case code
+      when 1000,1001,1002,1003,1007,1008,1009,1010,1011
+        1000
+      when 3000..3999
+        1000
+      when 4000..4999
+        1000
+      when nil
+        1000
+      else
+        1002
+      end
     end
   end
 end
