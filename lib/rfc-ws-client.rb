@@ -80,8 +80,7 @@ module RfcWebSocket
     def receive
       begin
         buffer = ""
-        fragmented = false
-        binary = false
+        fragmented = nil
         # Loop until something returns
         while true
           b1, b2 = read(2).unpack("CC")
@@ -115,18 +114,21 @@ module RfcWebSocket
           case opcode
           when OPCODE_CONTINUATION
             raise WebSocketError.new("no frame to continue") unless fragmented
-            buffer << payload.force_encoding("UTF-8")
+            if fragmented == :binary
+              buffer << payload
+            else
+              buffer << payload.force_encoding("UTF-8")
+            end
             if fin
-              raise WebSocketError.new("invalid utf8", 1007) if !binary and !valid_utf8?(buffer)
-              return buffer, binary
+              raise WebSocketError.new("invalid utf8", 1007) if fragmented == :text and !valid_utf8?(buffer)
+              return buffer, fragmented == :binary
             else
               next
             end
           when OPCODE_TEXT
             raise WebSocketError.new("unexpected opcode in continuation mode") if fragmented
             if !fin
-              fragmented = true
-              binary = false
+              fragmented = :text
               buffer << payload.force_encoding("UTF-8")
               next
             else
@@ -136,8 +138,7 @@ module RfcWebSocket
           when OPCODE_BINARY
             raise WebSocketError.new("unexpected opcode in continuation mode") if fragmented
             if !fin
-              fragmented = true
-              binary = true
+              fragmented = :binary
               buffer << payload
             else
               return payload, true
@@ -162,7 +163,6 @@ module RfcWebSocket
       rescue EOFError
         return nil, nil
       rescue WebSocketError => e
-        puts e
         close(e.code)
         raise e
       end

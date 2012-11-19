@@ -15,7 +15,8 @@ ws.close
       break if data.nil?
       ws.send_message data, binary: binary
     end
-  rescue
+  rescue => e
+    puts e
   end
 end
 
