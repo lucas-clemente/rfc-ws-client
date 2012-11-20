@@ -5,7 +5,6 @@ require 'uri'
 require 'socket'
 require 'securerandom'
 require "digest/sha1"
-require 'rainbow'
 require 'base64'
 
 module RfcWebSocket
@@ -26,7 +25,6 @@ module RfcWebSocket
     OPCODE_CLOSE = 0x08
     OPCODE_PING = 0x09
     OPCODE_PONG = 0x0a
-    DEBUG = false
 
     def initialize(uri, protocol = "")
       uri = URI.parse(uri) unless uri.is_a?(URI)
@@ -53,11 +51,11 @@ module RfcWebSocket
       write(handshake(host, path, request_key))
       flush()
 
-      status_line = gets.chomp
+      status_line = @socket.gets.chomp
       raise WebSocketError.new("bad response: #{status_line}") unless status_line.start_with?("HTTP/1.1 101")
 
       header = {}
-      while line = gets
+      while line = @socket.gets
         line.chomp!
         break if line.empty?
         if !(line =~ /\A(\S+): (.*)\z/n)
@@ -84,7 +82,6 @@ module RfcWebSocket
         # Loop until something returns
         while true
           b1, b2 = read(2).unpack("CC")
-          puts "b1: #{b1.to_s(2).rjust(8, "0")}, b2: #{b2.to_s(2).rjust(8, "0")}" if DEBUG
           # first byte
           fin = (b1 & 0x80) != 0
           raise WebSocketError.new("reserved bits must be 0") if (b1 & 0b01110000) != 0
@@ -175,14 +172,7 @@ module RfcWebSocket
 
     private
 
-    def gets(delim = $/)
-      line = @socket.gets(delim)
-      print line.color(:green) if DEBUG
-      line
-    end
-
     def write(data)
-      print data.color(:yellow) if DEBUG
       @socket.write(data)
       @socket.flush
     end
@@ -190,7 +180,6 @@ module RfcWebSocket
     def read(num_bytes)
       str = @socket.read(num_bytes)
       if str && str.bytesize == num_bytes
-        print str.color(:green) if DEBUG
         str
       else
         raise(EOFError)
@@ -257,12 +246,8 @@ module RfcWebSocket
       end
     end
 
-    def force_utf8(str)
-      str.force_encoding("UTF-8")
-    end
-
     def valid_utf8?(str)
-      force_utf8(str).valid_encoding?
+      str.force_encoding("UTF-8").valid_encoding?
     end
   end
 end
