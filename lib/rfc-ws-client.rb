@@ -69,105 +69,117 @@ module RfcWebSocket
       raise WebSocketError.new("sec-websocket-accept missing") unless accept
       expected_accept = Digest::SHA1.base64digest(request_key + WEB_SOCKET_GUID)
       raise WebSocketError.new("sec-websocket-accept is invalid, actual: #{accept}, expected: #{expected_accept}") unless accept == expected_accept
+    rescue WebSocketError
+      raise
+    rescue => e
+      raise WebSocketError(e.to_s)
     end
 
     def send_message(message, opts = {binary: false})
       write(encode(message, opts[:binary] ? OPCODE_BINARY : OPCODE_TEXT))
+    rescue WebSocketError
+      raise
+    rescue => e
+      raise WebSocketError(e.to_s)
     end
 
     def receive
-      begin
-        buffer = ""
-        fragmented = nil
-        # Loop until something returns
-        while true
-          b1, b2 = read(2).unpack("CC")
-          # first byte
-          fin = (b1 & 0x80) != 0
-          raise WebSocketError.new("reserved bits must be 0") if (b1 & 0b01110000) != 0
-          opcode = b1 & 0x0f
-          # second byte
-          mask = (b2 & 0x80) != 0
-          # we're a client
-          raise WebSocketError.new("server->client must not be masked!") if mask
-          length = b2 & 0x7f
-          if opcode > 7
-            raise WebSocketError.new("control frame cannot be fragmented") unless fin
-            raise WebSocketError.new("control frame is too large: #{length}") if length > 125
-            raise WebSocketError.new("unexpected reserved opcode: #{opcode}") if opcode > 0xA
-            raise WebSocketError.new("close frame with payload length 1") if length == 1 and opcode == OPCODE_CLOSE
-          elsif opcode != OPCODE_CONTINUATION && opcode != OPCODE_TEXT && opcode != OPCODE_BINARY
-            raise WebSocketError.new("unexpected reserved opcode: #{opcode}")
+      buffer = ""
+      fragmented = nil
+      # Loop until something returns
+      while true
+        b1, b2 = read(2).unpack("CC")
+        # first byte
+        fin = (b1 & 0x80) != 0
+        raise WebSocketError.new("reserved bits must be 0") if (b1 & 0b01110000) != 0
+        opcode = b1 & 0x0f
+        # second byte
+        mask = (b2 & 0x80) != 0
+        # we're a client
+        raise WebSocketError.new("server->client must not be masked!") if mask
+        length = b2 & 0x7f
+        if opcode > 7
+          raise WebSocketError.new("control frame cannot be fragmented") unless fin
+          raise WebSocketError.new("control frame is too large: #{length}") if length > 125
+          raise WebSocketError.new("unexpected reserved opcode: #{opcode}") if opcode > 0xA
+          raise WebSocketError.new("close frame with payload length 1") if length == 1 and opcode == OPCODE_CLOSE
+        elsif opcode != OPCODE_CONTINUATION && opcode != OPCODE_TEXT && opcode != OPCODE_BINARY
+          raise WebSocketError.new("unexpected reserved opcode: #{opcode}")
+        end
+        # extended payload length
+        if length == 126
+          length = read(2).unpack("n")[0]
+        elsif length == 127
+          high, low = *read(8).unpack("NN")
+          length = high * (2 ** 32) + low
+        end
+        # payload
+        payload = read(length)
+        case opcode
+        when OPCODE_CONTINUATION
+          raise WebSocketError.new("no frame to continue") unless fragmented
+          if fragmented == :binary
+            buffer << payload
+          else
+            buffer << payload.force_encoding("UTF-8")
           end
-          # extended payload length
-          if length == 126
-            length = read(2).unpack("n")[0]
-          elsif length == 127
-            high, low = *read(8).unpack("NN")
-            length = high * (2 ** 32) + low
-          end
-          # payload
-          payload = read(length)
-          case opcode
-          when OPCODE_CONTINUATION
-            raise WebSocketError.new("no frame to continue") unless fragmented
-            if fragmented == :binary
-              buffer << payload
-            else
-              buffer << payload.force_encoding("UTF-8")
-            end
-            if fin
-              raise WebSocketError.new("invalid utf8", 1007) if fragmented == :text and !valid_utf8?(buffer)
-              return buffer, fragmented == :binary
-            else
-              next
-            end
-          when OPCODE_TEXT
-            raise WebSocketError.new("unexpected opcode in continuation mode") if fragmented
-            if !fin
-              fragmented = :text
-              buffer << payload.force_encoding("UTF-8")
-              next
-            else
-              raise WebSocketError.new("invalid utf8", 1007) unless valid_utf8?(payload)
-              return payload, false
-            end
-          when OPCODE_BINARY
-            raise WebSocketError.new("unexpected opcode in continuation mode") if fragmented
-            if !fin
-              fragmented = :binary
-              buffer << payload
-            else
-              return payload, true
-            end
-          when OPCODE_CLOSE
-            code, explain = payload.unpack("nA*")
-            if explain && !valid_utf8?(explain)
-              close(1007)
-            else
-              close(response_close_code(code))
-            end
-            return nil, nil
-          when OPCODE_PING
-            write(encode(payload, OPCODE_PONG))
+          if fin
+            raise WebSocketError.new("invalid utf8", 1007) if fragmented == :text and !valid_utf8?(buffer)
+            return buffer, fragmented == :binary
+          else
             next
-          when OPCODE_PONG
+          end
+        when OPCODE_TEXT
+          raise WebSocketError.new("unexpected opcode in continuation mode") if fragmented
+          if !fin
+            fragmented = :text
+            buffer << payload.force_encoding("UTF-8")
             next
           else
-            raise WebSocketError.new("received unknown opcode: #{opcode}")
+            raise WebSocketError.new("invalid utf8", 1007) unless valid_utf8?(payload)
+            return payload, false
           end
+        when OPCODE_BINARY
+          raise WebSocketError.new("unexpected opcode in continuation mode") if fragmented
+          if !fin
+            fragmented = :binary
+            buffer << payload
+          else
+            return payload, true
+          end
+        when OPCODE_CLOSE
+          code, explain = payload.unpack("nA*")
+          if explain && !valid_utf8?(explain)
+            close(1007)
+          else
+            close(response_close_code(code))
+          end
+          return nil, nil
+        when OPCODE_PING
+          write(encode(payload, OPCODE_PONG))
+          next
+        when OPCODE_PONG
+          next
+        else
+          raise WebSocketError.new("received unknown opcode: #{opcode}")
         end
-      rescue EOFError
-        return nil, nil
-      rescue WebSocketError => e
-        close(e.code)
-        raise e
       end
+    rescue EOFError
+      return nil, nil
+    rescue WebSocketError => e
+      close(e.code)
+      raise e
+    rescue => e
+      raise WebSocketError(e.to_s)
     end
 
     def close(code = 1000, msg = nil)
       write(encode [code ? code : 1000, msg].pack("nA*"), OPCODE_CLOSE)
       @socket.close
+    rescue WebSocketError
+      raise
+    rescue => e
+      raise WebSocketError(e.to_s)
     end
 
     private
