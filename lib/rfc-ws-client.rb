@@ -182,6 +182,10 @@ module RfcWebSocket
       raise WebSocketError.new(e.to_s)
     end
 
+    def closed?
+      @socket.closed?
+    end
+
     private
 
     def write(data)
