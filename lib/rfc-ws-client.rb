@@ -72,7 +72,7 @@ module RfcWebSocket
     rescue WebSocketError
       raise
     rescue => e
-      raise WebSocketError(e.to_s)
+      raise WebSocketError.new(e.to_s)
     end
 
     def send_message(message, opts = {binary: false})
@@ -80,7 +80,7 @@ module RfcWebSocket
     rescue WebSocketError
       raise
     rescue => e
-      raise WebSocketError(e.to_s)
+      raise WebSocketError.new(e.to_s)
     end
 
     def receive
@@ -170,7 +170,7 @@ module RfcWebSocket
       close(e.code)
       raise e
     rescue => e
-      raise WebSocketError(e.to_s)
+      raise WebSocketError.new(e.to_s)
     end
 
     def close(code = 1000, msg = nil)
@@ -179,7 +179,7 @@ module RfcWebSocket
     rescue WebSocketError
       raise
     rescue => e
-      raise WebSocketError(e.to_s)
+      raise WebSocketError.new(e.to_s)
     end
 
     private
